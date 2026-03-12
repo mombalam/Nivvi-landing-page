@@ -18,6 +18,11 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+try:
+    import psycopg
+except ImportError:  # pragma: no cover - optional runtime dependency
+    psycopg = None
+
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PHONE_RE = re.compile(r"^\+?[0-9().\-\s]{7,32}$")
@@ -134,6 +139,9 @@ WEB_DIR = ROOT / "web"
 DATA_DIR = ROOT / "data"
 DATA_DIR.mkdir(exist_ok=True)
 STORE_FILE = Path(os.getenv("NIVVI_WAITLIST_STORE", DATA_DIR / "waitlist_store.json"))
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 store_lock = Lock()
 waitlist_by_email: dict[str, WaitlistLead] = {}
@@ -203,6 +211,127 @@ def _save_store() -> None:
     STORE_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _connect_db():
+    if psycopg is None:  # pragma: no cover
+        raise RuntimeError("DATABASE_URL is set but psycopg is not installed")
+    return psycopg.connect(DATABASE_URL)
+
+
+def _db_row_to_lead(row: tuple) -> WaitlistLead:
+    created_at = row[8]
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return WaitlistLead(
+        id=row[0],
+        first_name=row[1],
+        last_name=row[2],
+        email=row[3],
+        phone_number=row[4],
+        marketing_consent=row[5],
+        source=row[6],
+        utm=json.loads(row[7] or "{}"),
+        created_at=created_at,
+    )
+
+
+def _db_init() -> None:
+    with _connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS waitlist_leads (
+                    id TEXT PRIMARY KEY,
+                    first_name TEXT NOT NULL,
+                    last_name TEXT,
+                    email TEXT NOT NULL UNIQUE,
+                    phone_number TEXT,
+                    marketing_consent BOOLEAN NOT NULL,
+                    source TEXT,
+                    utm_json TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+            conn.commit()
+
+
+def _db_get_by_email(email: str) -> WaitlistLead | None:
+    with _connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, first_name, last_name, email, phone_number, marketing_consent, source, utm_json, created_at
+                FROM waitlist_leads
+                WHERE email = %s
+                LIMIT 1
+                """,
+                (email,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    return _db_row_to_lead(row)
+
+
+def _db_insert_lead(lead: WaitlistLead) -> None:
+    with _connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO waitlist_leads (
+                    id, first_name, last_name, email, phone_number, marketing_consent, source, utm_json, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    lead.id,
+                    lead.first_name,
+                    lead.last_name,
+                    lead.email,
+                    lead.phone_number,
+                    lead.marketing_consent,
+                    lead.source,
+                    json.dumps(lead.utm, separators=(",", ":"), sort_keys=True),
+                    lead.created_at,
+                ),
+            )
+            conn.commit()
+
+
+def _db_list_leads(limit: int, source: str | None) -> tuple[int, list[WaitlistLead]]:
+    where = " WHERE source = %s" if source else ""
+    params: tuple = (source,) if source else tuple()
+
+    with _connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM waitlist_leads{where}", params)
+            total_count = int(cur.fetchone()[0])
+
+            if source:
+                cur.execute(
+                    """
+                    SELECT id, first_name, last_name, email, phone_number, marketing_consent, source, utm_json, created_at
+                    FROM waitlist_leads
+                    WHERE source = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (source, limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, first_name, last_name, email, phone_number, marketing_consent, source, utm_json, created_at
+                    FROM waitlist_leads
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+            rows = cur.fetchall()
+
+    return total_count, [_db_row_to_lead(row) for row in rows]
+
+
 def _require_admin_key(request: Request) -> None:
     expected_key = os.getenv("NIVVI_ADMIN_KEY", "").strip()
     if not expected_key:
@@ -213,7 +342,10 @@ def _require_admin_key(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-_load_store()
+if DATABASE_URL:
+    _db_init()
+else:
+    _load_store()
 
 
 app = FastAPI(
@@ -236,13 +368,40 @@ if WEB_DIR.exists():
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "service": "marketing"}
+    backend = "database" if DATABASE_URL else "json_file"
+    return {"status": "ok", "service": "marketing", "waitlist_backend": backend}
 
 
 @app.post("/v1/waitlist", response_model=WaitlistResponse)
 def create_waitlist_lead(payload: WaitlistRequest) -> WaitlistResponse:
     if not payload.marketing_consent:
         raise HTTPException(status_code=400, detail="marketing_consent must be true")
+
+    if DATABASE_URL:
+        existing = _db_get_by_email(payload.email)
+        if existing:
+            return WaitlistResponse(id=existing.id, status="already_exists", created_at=existing.created_at)
+
+        lead = WaitlistLead(
+            id=uuid4().hex,
+            first_name=payload.first_name,
+            last_name=payload.last_name,
+            email=payload.email,
+            phone_number=payload.phone_number,
+            marketing_consent=True,
+            source=payload.source,
+            utm=payload.utm or {},
+            created_at=datetime.now(timezone.utc),
+        )
+        try:
+            _db_insert_lead(lead)
+        except Exception:
+            # Protect against concurrent inserts on unique(email).
+            existing = _db_get_by_email(payload.email)
+            if existing:
+                return WaitlistResponse(id=existing.id, status="already_exists", created_at=existing.created_at)
+            raise
+        return WaitlistResponse(id=lead.id, status="created", created_at=lead.created_at)
 
     with store_lock:
         existing = waitlist_by_email.get(payload.email)
@@ -286,6 +445,12 @@ def list_waitlist_leads(
     source: str | None = Query(default=None, max_length=64),
 ) -> dict:
     _require_admin_key(request)
+
+    if DATABASE_URL:
+        total_count, leads = _db_list_leads(limit=limit, source=source)
+        rows = [_serialize_lead(lead) for lead in leads]
+        return {"total_count": total_count, "returned_count": len(rows), "items": rows}
+
     leads = sorted(waitlist_by_email.values(), key=lambda item: item.created_at, reverse=True)
     if source:
         leads = [lead for lead in leads if lead.source == source]
@@ -297,9 +462,12 @@ def list_waitlist_leads(
 def export_waitlist_leads_csv(request: Request, source: str | None = Query(default=None, max_length=64)) -> Response:
     _require_admin_key(request)
 
-    leads = sorted(waitlist_by_email.values(), key=lambda item: item.created_at, reverse=True)
-    if source:
-        leads = [lead for lead in leads if lead.source == source]
+    if DATABASE_URL:
+        _, leads = _db_list_leads(limit=5000, source=source)
+    else:
+        leads = sorted(waitlist_by_email.values(), key=lambda item: item.created_at, reverse=True)
+        if source:
+            leads = [lead for lead in leads if lead.source == source]
 
     output = io.StringIO()
     writer = csv.writer(output)

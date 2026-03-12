@@ -36,7 +36,12 @@ export NIVVI_ADMIN_KEY="replace-with-strong-key"
 
 Then call with header `x-admin-key`.
 
+## Persistence
+
+- Development fallback: local JSON file (`data/waitlist_store.json`).
+- Production recommended: set `DATABASE_URL` (Postgres) so waitlist leads are durable across restarts/redeploys.
+
 ## Notes
 
-- Waitlist data is persisted to `data/waitlist_store.json` by default.
+- Waitlist data uses Postgres when `DATABASE_URL` is configured, otherwise JSON-file fallback.
 - Static assets are served from `web/` at `/static/*`.

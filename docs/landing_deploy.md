@@ -14,6 +14,7 @@ uvicorn marketing:app --host 0.0.0.0 --port $PORT
 
 - `NIVVI_ADMIN_KEY` for admin lead listing/export endpoints.
 - Optional: `NIVVI_WAITLIST_STORE` (path override for waitlist JSON file).
+- Recommended for production: `DATABASE_URL` (Postgres) for durable waitlist persistence.
 
 ## Endpoints
 
@@ -33,3 +34,4 @@ uvicorn marketing:app --host 0.0.0.0 --port $PORT
 2. Set start command above.
 3. Add env var `NIVVI_ADMIN_KEY`.
 4. Deploy.
+5. If possible, attach a Postgres instance and set `DATABASE_URL`.
