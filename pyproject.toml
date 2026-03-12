@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "nivvi-marketing"
 version = "1.0.0"
@@ -15,6 +19,14 @@ dependencies = [
 dev = [
   "pytest>=8.3.0",
 ]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nivvi*"]
+exclude = ["web*", "tests*", "docs*", "data*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
