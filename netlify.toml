@@ -1,0 +1,58 @@
+[build]
+  publish = "web"
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/v1/admin/waitlist/leads.csv"
+  to = "/.netlify/functions/admin-leads-csv"
+  status = 200
+
+[[redirects]]
+  from = "/v1/admin/waitlist/leads"
+  to = "/.netlify/functions/admin-leads"
+  status = 200
+
+[[redirects]]
+  from = "/v1/waitlist"
+  to = "/.netlify/functions/waitlist"
+  status = 200
+
+[[redirects]]
+  from = "/v1/analytics/events"
+  to = "/.netlify/functions/analytics"
+  status = 200
+
+[[redirects]]
+  from = "/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+[[redirects]]
+  from = "/waitlist/success"
+  to = "/waitlist-success.html"
+  status = 200
+
+[[redirects]]
+  from = "/waitlist"
+  to = "/waitlist.html"
+  status = 200
+
+[[redirects]]
+  from = "/legal/privacy"
+  to = "/privacy.html"
+  status = 200
+
+[[redirects]]
+  from = "/legal/terms"
+  to = "/terms.html"
+  status = 200
+
+[[redirects]]
+  from = "/static/*"
+  to = "/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/landing.html"
+  to = "/"
+  status = 301

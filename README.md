@@ -41,6 +41,17 @@ Then call with header `x-admin-key`.
 - Development fallback: local JSON file (`data/waitlist_store.json`).
 - Production recommended: set `DATABASE_URL` (Postgres) so waitlist leads are durable across restarts/redeploys.
 
+## Netlify deployment
+
+This repo also supports direct Netlify deployment:
+
+- static pages are published from `web/`
+- pretty URLs are handled by `netlify.toml`
+- waitlist capture and admin export run through Netlify Functions
+- Netlify-hosted waitlist data is stored in Netlify Blobs
+
+Set `NIVVI_ADMIN_KEY` in Netlify if you want the admin export endpoints enabled.
+
 ## Notes
 
 - Waitlist data uses Postgres when `DATABASE_URL` is configured, otherwise JSON-file fallback.

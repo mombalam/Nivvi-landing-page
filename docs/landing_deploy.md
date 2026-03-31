@@ -35,3 +35,29 @@ uvicorn marketing:app --host 0.0.0.0 --port $PORT
 3. Add env var `NIVVI_ADMIN_KEY`.
 4. Deploy.
 5. If possible, attach a Postgres instance and set `DATABASE_URL`.
+
+## Netlify quick setup
+
+This repo can also ship as a static Netlify site with Netlify Functions.
+
+1. Connect the repo in Netlify.
+2. Netlify will use `netlify.toml` from the repo root:
+   - publish directory: `web`
+   - functions directory: `netlify/functions`
+3. Add env var `NIVVI_ADMIN_KEY` if you want admin lead export endpoints.
+4. Deploy.
+
+Netlify-specific routes provided by config:
+
+- `/`
+- `/waitlist`
+- `/waitlist/success`
+- `/legal/privacy`
+- `/legal/terms`
+- `/health`
+- `/v1/waitlist`
+- `/v1/analytics/events`
+- `/v1/admin/waitlist/leads`
+- `/v1/admin/waitlist/leads.csv`
+
+Waitlist and analytics data are stored through Netlify Blobs when deployed on Netlify.

@@ -518,6 +518,8 @@ def _static_page(path: str, content_type: str | None = None):
 
 @app.get("/", response_model=None)
 def root():
+    if (WEB_DIR / "index.html").exists():
+        return _static_page("index.html")
     return _static_page("landing.html")
 
 
